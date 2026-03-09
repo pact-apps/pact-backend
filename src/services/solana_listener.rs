@@ -1,8 +1,6 @@
 use serde_json::json;
 use sqlx::PgPool;
 
-use super::scoring;
-
 /// Solana event listener — polls for program transactions and indexes them.
 /// Uses getSignaturesForAddress + getTransaction to parse Anchor event logs.
 pub async fn poll_program_events(pool: &PgPool, rpc_url: &str, program_id: &str) {
@@ -173,9 +171,10 @@ async fn index_transaction(
 
     tracing::info!("Indexed tx {} as {}", entry.signature, event_type);
 
-    // Process scoring when a challenge is settled
+    // Local score projection is disabled for now.
+    // Commitment score should come from on-chain CommitmentProfile instead.
     if is_success && event_type == "ChallengeSettled" {
-        let all_keys: Vec<String> = account_keys
+        let participant_count = account_keys
             .iter()
             .filter_map(|k| {
                 k["pubkey"]
@@ -183,11 +182,12 @@ async fn index_transaction(
                     .or_else(|| k.as_str())
                     .map(String::from)
             })
-            .collect();
+            .count();
 
-        if let Err(e) = process_settlement_scoring(pool, client, rpc_url, &all_keys).await {
-            tracing::warn!("Failed to process settlement scoring: {}", e);
-        }
+        tracing::info!(
+            "ChallengeSettled indexed for {} accounts; skipping backend-local score update",
+            participant_count
+        );
     }
 
     Ok(())
@@ -301,122 +301,14 @@ fn parse_participant(data: &[u8]) -> Option<OnChainParticipant> {
     })
 }
 
-/// After a ChallengeSettled event, fetch on-chain accounts and update scores.
+/// Deprecated local score projection. Left in place until CommitmentProfile-based
+/// score reads fully replace the legacy backend-local table.
 async fn process_settlement_scoring(
-    pool: &PgPool,
-    client: &reqwest::Client,
-    rpc_url: &str,
-    account_keys: &[String],
+    _pool: &PgPool,
+    _client: &reqwest::Client,
+    _rpc_url: &str,
+    _account_keys: &[String],
 ) -> anyhow::Result<()> {
-    // Fetch all accounts from the transaction
-    let body = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "getMultipleAccounts",
-        "params": [
-            account_keys,
-            {"encoding": "base64"}
-        ]
-    });
-
-    let resp: serde_json::Value = client
-        .post(rpc_url)
-        .json(&body)
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    let accounts = resp["result"]["value"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-
-    let mut challenge_info: Option<OnChainChallenge> = None;
-    let mut participants: Vec<OnChainParticipant> = Vec::new();
-
-    for account in &accounts {
-        if account.is_null() {
-            continue;
-        }
-        let data_arr = match account["data"].as_array() {
-            Some(arr) => arr,
-            None => continue,
-        };
-        let data_b64 = match data_arr.first().and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => continue,
-        };
-        let data = match base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            data_b64,
-        ) {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-
-        if data.len() >= 8 {
-            if data[..8] == CHALLENGE_DISCRIMINATOR {
-                if let Some(c) = parse_challenge(&data) {
-                    challenge_info = Some(c);
-                }
-            } else if data[..8] == PARTICIPANT_DISCRIMINATOR {
-                if let Some(p) = parse_participant(&data) {
-                    participants.push(p);
-                }
-            }
-        }
-    }
-
-    let challenge = match challenge_info {
-        Some(c) => c,
-        None => {
-            tracing::warn!("Could not find Challenge account in settlement tx");
-            return Ok(());
-        }
-    };
-
-    let stake = challenge.stake_amount as i64;
-    let winner_count = participants.iter().filter(|p| p.is_winner).count();
-
-    // Calculate per-winner earnings (after 2% fee)
-    let total_pool = stake * participants.len() as i64;
-    let fee = total_pool * 2 / 100;
-    let per_winner = if winner_count > 0 {
-        (total_pool - fee) / winner_count as i64
-    } else {
-        0
-    };
-
-    for p in &participants {
-        if !p.deposited {
-            continue;
-        }
-        let wallet = bs58::encode(&p.participant).into_string();
-
-        if p.is_winner {
-            if let Err(e) = scoring::update_score_on_complete(pool, &wallet, stake, per_winner).await {
-                tracing::warn!("Failed to update score for winner {}: {}", wallet, e);
-            } else {
-                tracing::info!("Score updated: {} WON (earned {})", wallet, per_winner);
-            }
-        } else {
-            let was_auto_fail = !p.submitted;
-            let was_disputed = p.disputed || p.dispute_count > 0;
-            if let Err(e) = scoring::update_score_on_fail(pool, &wallet, stake, was_disputed, was_auto_fail).await {
-                tracing::warn!("Failed to update score for loser {}: {}", wallet, e);
-            } else {
-                tracing::info!("Score updated: {} LOST (auto_fail={}, disputed={})", wallet, was_auto_fail, was_disputed);
-            }
-        }
-    }
-
-    tracing::info!(
-        "Settlement scoring complete: {} winners, {} losers out of {} participants",
-        winner_count,
-        participants.len() - winner_count,
-        participants.len()
-    );
-
+    tracing::info!("Skipping deprecated backend-local settlement scoring");
     Ok(())
 }

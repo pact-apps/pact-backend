@@ -69,7 +69,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Protected routes (require JWT auth)
     let protected = Router::new()
+        .route("/api/chain/finalize-plan", post(routes::chain::build_finalize_plan))
         .route("/api/challenges/{challenge_id}/metadata", post(routes::challenges::upsert_metadata))
+        .route("/api/challenges/{challenge_id}/proofs/final", post(routes::submissions::upload_final_proof))
+        .route("/api/challenges/{challenge_id}/checkins", post(routes::submissions::upload_daily_checkin))
         .route("/api/proofs/upload", post(routes::proofs::upload_proof))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -79,11 +82,16 @@ async fn main() -> anyhow::Result<()> {
     // Public routes
     let app = Router::new()
         .route("/health", get(routes::health::health_check))
+        .route("/api/chain/config", get(routes::chain::get_chain_config))
         .route("/api/challenges", get(routes::challenges::list_challenges))
         .route("/api/challenges/{challenge_id}", get(routes::challenges::get_challenge))
+        .route("/api/challenges/{challenge_id}/config", get(routes::challenges::get_challenge_config))
+        .route("/api/challenges/{challenge_id}/submissions", get(routes::submissions::list_submissions_for_challenge))
+        .route("/api/challenges/{challenge_id}/submissions/{wallet}", get(routes::submissions::get_participant_submission))
+        .route("/api/challenges/{challenge_id}/submissions/{wallet}/summary", get(routes::submissions::get_final_summary).post(routes::submissions::generate_final_summary))
+        .route("/api/challenges/{challenge_id}/submissions/{wallet}/proof-hash", get(routes::submissions::get_final_hash))
+        .route("/api/challenges/{challenge_id}/submissions/{wallet}/dispute-review", get(routes::submissions::get_dispute_review))
         .route("/api/proofs/{challenge_id}/{wallet}", get(routes::proofs::get_proof))
-        .route("/api/scores/{wallet}", get(routes::scores::get_score))
-        .route("/api/scores", get(routes::scores::leaderboard))
         .route("/api/events/{challenge_id}", get(routes::events::get_events))
         .route("/api/auth/nonce", get(routes::auth::get_nonce))
         .route("/api/auth/verify", post(routes::auth::verify_signature))
