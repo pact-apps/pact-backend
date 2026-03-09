@@ -16,9 +16,9 @@ pub async fn update_score_on_complete(
     sqlx::query(
         r#"
         INSERT INTO commitment_scores (wallet_address, score, challenges_joined, challenges_completed, total_staked_lamports, total_earned_lamports, streak_current, streak_best)
-        VALUES ($1, 110, 1, 1, $2, $3, 1, 1)
+        VALUES ($1, 100, 1, 1, $2, $3, 1, 1)
         ON CONFLICT (wallet_address) DO UPDATE SET
-            score = commitment_scores.score + 10,
+            score = LEAST(100, commitment_scores.score + 10),
             challenges_completed = commitment_scores.challenges_completed + 1,
             challenges_joined = commitment_scores.challenges_joined + 1,
             total_staked_lamports = commitment_scores.total_staked_lamports + $2,
@@ -57,7 +57,7 @@ pub async fn update_score_on_fail(
         INSERT INTO commitment_scores (wallet_address, score, challenges_joined, challenges_failed, total_staked_lamports, streak_current)
         VALUES ($1, GREATEST(0, 100 + $2), 1, 1, $3, 0)
         ON CONFLICT (wallet_address) DO UPDATE SET
-            score = GREATEST(0, commitment_scores.score + $2),
+            score = LEAST(100, GREATEST(0, commitment_scores.score + $2)),
             challenges_failed = commitment_scores.challenges_failed + 1,
             challenges_joined = commitment_scores.challenges_joined + 1,
             total_staked_lamports = commitment_scores.total_staked_lamports + $3,

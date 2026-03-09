@@ -19,6 +19,9 @@ pub async fn health_check(State(state): State<AppState>) -> (StatusCode, Json<Va
             "status": if db_ok { "healthy" } else { "unhealthy" },
             "database": db_ok,
             "program_id": state.program_id,
+            "platform_config_pda": state.platform_config_pda,
+            "treasury_authority": state.treasury_authority,
+            "platform_fee_bps": state.platform_fee_bps,
             "solana_rpc": state.solana_rpc,
         })),
     )
