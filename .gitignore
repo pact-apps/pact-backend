@@ -1,1 +1,9 @@
 /target
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local logs
+*.log
